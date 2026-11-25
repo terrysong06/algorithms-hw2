@@ -1,31 +1,25 @@
-# 과제2 · 에이전트와 함께 만드는 URL 단축기
+# 과제2 · 에이전트와 함께 만든 URL 단축기
 
 2026-2 **고급알고리즘**(SIT2001-01) 과제2의 **시작 저장소**입니다.
-채팅창에 묻고 복사·붙여넣기 하던 방식에서 벗어나, Codespace 안의 에이전트가
-저장소를 읽고, 파일을 고치고, 테스트를 직접 돌리게 하는 방법을 익힙니다.
+명세에 따라 Base62, 해시 테이블, URL 단축 웹 서비스와 성능 비교 실험을 구현했습니다.
 
 - 과제 안내: [lec-algorithm.github.io/lecture/article/hw2-2026](https://lec-algorithm.github.io/lecture/article/hw2-2026/)
 - 수업 슬라이드: [lec-algorithm.github.io/lecture/slides/hw2-2026](https://lec-algorithm.github.io/lecture/slides/hw2-2026/)
 - 해시 테이블 복습: [주제 08 해시 테이블](https://lec-algorithm.github.io/lecture/course/topic-08-hashing/)
 
-## 시작하기
-
-1. 이 저장소 상단의 **Use this template** → **Create a new repository**
-2. 저장소 이름은 `algorithms-hw2`처럼 정합니다. 공개(Public)로 만듭니다.
-3. 만들어진 **내 저장소**에서 **Code** → **Codespaces** 탭 → **Create codespace on main**
-4. 왼쪽 막대의 Copilot 아이콘을 눌러 채팅 창을 열고, 창 아래쪽에서 **Agent** 모드를 고릅니다.
-
-## 들어 있는 것
+## 구현 내용
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `SPEC.md` | 명세 틀. 에이전트가 초안을 쓰고 **본인이 고칩니다** |
-| `src/` · `tests/` · `experiments/` | 비어 있습니다. 수업에서 채웁니다 |
-| `tools/catchup.sh` | 수업 중 놓친 단계를 따라잡는 스크립트 |
-| `Makefile` | `make test` · `make serve` · `make experiment` |
-
-정답 코드는 들어 있지 않습니다. 에이전트는 작업 공간의 파일을 읽으므로, 정답이
-옆에 있으면 그대로 베껴 와서 연습이 되지 않습니다.
+| `src/base62.py` | 단축 코드의 Base62 인코딩·디코딩 |
+| `src/hash_table.py` | 개별 체이닝 해시 테이블 |
+| `src/linear_probing.py` | 선형 탐지 해시 테이블 |
+| `src/shortener.py` · `src/server.py` | 두 해시 전략을 지원하는 URL 단축기와 웹 서버 |
+| `tests/` | 단위·회귀 테스트 |
+| `experiments/probe_experiment.py` | 기존 개별 체이닝 탐색 비용 실험 |
+| `experiments/compare_experiment.py` | 체이닝과 선형 탐지 탐색 비용 비교 |
+| `experiments/comparison_results.csv` · `experiments/comparison.svg` | 비교 실험의 실측 결과와 그래프 |
+| `Makefile` | 테스트, 웹 서버 및 실험 명령 |
 
 ## 명령
 
@@ -36,9 +30,14 @@
 | 테스트 | `make test` |
 | 웹 서버 (포트 8000) | `make serve` |
 | 충돌 실험 | `make experiment` |
+| 체이닝과 선형 탐지 비교 | `make compare-experiment` |
 | 놓친 단계 따라잡기 | `sh tools/catchup.sh <단계 번호>` |
 
 외부 라이브러리는 쓰지 않습니다. Python 표준 모듈만으로 충분합니다.
+
+비교 실험은 난수 시드 `42`, 버킷 `4093`개, 적재율 `0.1`~`0.9`를 사용합니다.
+두 방식에 같은 URL 키, 삽입 순서, 성공·실패 조회 표본을 적용하고 자동 확장은 끕니다.
+각 적재율에서 성공·실패 조회를 각각 10,000회 수행하며, 명령 실행 시 CSV와 SVG를 다시 생성합니다.
 
 ## 로컬에서 하기
 

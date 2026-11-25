@@ -1,8 +1,10 @@
 import unicodedata
+from typing import Literal
 from urllib.parse import urlsplit
 
 from src.base62 import decode, encode
 from src.hash_table import ChainedHashTable
+from src.linear_probing import LinearProbingHashTable
 
 
 class URLShortener:
@@ -10,15 +12,21 @@ class URLShortener:
         self,
         initial_capacity: int = 8,
         max_load: int | float | None = 0.75,
+        strategy: Literal["chaining", "linear_probing"] = "chaining",
     ) -> None:
-        self._url_to_code: ChainedHashTable[str] = ChainedHashTable(
-            initial_capacity,
-            max_load,
-        )
-        self._code_to_url: ChainedHashTable[str] = ChainedHashTable(
-            initial_capacity,
-            max_load,
-        )
+        self.strategy = strategy
+        if strategy == "chaining":
+            self._url_to_code: ChainedHashTable[str] | LinearProbingHashTable[str] = (
+                ChainedHashTable(initial_capacity, max_load)
+            )
+            self._code_to_url: ChainedHashTable[str] | LinearProbingHashTable[str] = (
+                ChainedHashTable(initial_capacity, max_load)
+            )
+        elif strategy == "linear_probing":
+            self._url_to_code = LinearProbingHashTable(initial_capacity, max_load)
+            self._code_to_url = LinearProbingHashTable(initial_capacity, max_load)
+        else:
+            raise ValueError("strategy must be 'chaining' or 'linear_probing'")
         self._next_serial = 1
 
     def shorten(self, url: str) -> str:
@@ -66,8 +74,8 @@ class URLShortener:
     def tables(
         self,
     ) -> tuple[
-        tuple[str, ChainedHashTable[str]],
-        tuple[str, ChainedHashTable[str]],
+        tuple[str, ChainedHashTable[str] | LinearProbingHashTable[str]],
+        tuple[str, ChainedHashTable[str] | LinearProbingHashTable[str]],
     ]:
         return (
             ("url_to_code", self._url_to_code),

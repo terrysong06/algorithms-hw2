@@ -1,17 +1,37 @@
 import unittest
+from typing import Literal
 
 from src.base62 import encode
+from src.hash_table import ChainedHashTable
+from src.linear_probing import LinearProbingHashTable
 from src.shortener import URLShortener
 
 
 class URLShortenerTest(unittest.TestCase):
+    strategy: Literal["chaining", "linear_probing"] = "chaining"
+
+    def _new_shortener(self):
+        return URLShortener(strategy=self.strategy)
+
+    def test_selected_strategy_creates_both_matching_tables(self):
+        shortener = self._new_shortener()
+        tables = tuple(table for _, table in shortener.tables())
+        expected_type = (
+            ChainedHashTable if self.strategy == "chaining" else LinearProbingHashTable
+        )
+
+        self.assertEqual(len(tables), 2)
+        for table in tables:
+            with self.subTest(table=type(table).__name__):
+                self.assertIsInstance(table, expected_type)
+
     def test_first_url_receives_code_one(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
 
         self.assertEqual(shortener.shorten("https://example.com/first"), "1")
 
     def test_codes_encode_monotonically_increasing_serial_numbers(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         urls = tuple(f"https://example.com/item/{index}" for index in range(62))
 
         codes = tuple(shortener.shorten(url) for url in urls)
@@ -25,7 +45,7 @@ class URLShortenerTest(unittest.TestCase):
                 self.assertEqual(code, encode(serial))
 
     def test_duplicate_url_returns_existing_code_without_consuming_serial(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         url = "https://example.com/same"
 
         first_code = shortener.shorten(url)
@@ -36,7 +56,7 @@ class URLShortenerTest(unittest.TestCase):
         self.assertEqual(shortener.shorten("https://example.com/next"), "2")
 
     def test_expand_restores_original_url_exactly(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         url = "https://example.com/a/path?q=one%20two#section"
 
         code = shortener.shorten(url)
@@ -44,7 +64,7 @@ class URLShortenerTest(unittest.TestCase):
         self.assertEqual(shortener.expand(code), url)
 
     def test_invalid_urls_raise_value_error(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         invalid_urls = (
             "",
             "example.com/path",
@@ -63,10 +83,10 @@ class URLShortenerTest(unittest.TestCase):
 
     def test_non_string_url_raises_type_error(self):
         with self.assertRaises(TypeError):
-            URLShortener().shorten(None)
+            self._new_shortener().shorten(None)
 
     def test_invalid_codes_raise_value_error(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
 
         for code in ("", "bad_"):
             with self.subTest(code=code):
@@ -75,14 +95,14 @@ class URLShortenerTest(unittest.TestCase):
 
     def test_non_string_code_raises_type_error(self):
         with self.assertRaises(TypeError):
-            URLShortener().expand(None)
+            self._new_shortener().expand(None)
 
     def test_unregistered_valid_code_raises_key_error(self):
         with self.assertRaises(KeyError):
-            URLShortener().expand("Z")
+            self._new_shortener().expand("Z")
 
     def test_url_with_exactly_2048_characters_is_accepted(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         prefix = "https://example.com/"
         url = prefix + "a" * (2048 - len(prefix))
 
@@ -91,7 +111,7 @@ class URLShortenerTest(unittest.TestCase):
         self.assertEqual(shortener.expand("1"), url)
 
     def test_url_longer_than_2048_characters_is_rejected(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         prefix = "https://example.com/"
         url = prefix + "a" * (2049 - len(prefix))
 
@@ -100,7 +120,7 @@ class URLShortenerTest(unittest.TestCase):
             shortener.shorten(url)
 
     def test_invalid_input_does_not_consume_serial_number(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         self.assertEqual(shortener.shorten("https://example.com/first"), "1")
 
         with self.assertRaises(ValueError):
@@ -109,7 +129,7 @@ class URLShortenerTest(unittest.TestCase):
         self.assertEqual(shortener.shorten("https://example.com/second"), "2")
 
     def test_urls_are_compared_without_normalization(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         without_trailing_slash = "https://example.com"
         with_trailing_slash = "https://example.com/"
 
@@ -121,7 +141,7 @@ class URLShortenerTest(unittest.TestCase):
         self.assertEqual(shortener.expand(second_code), with_trailing_slash)
 
     def test_rehash_preserves_mappings_and_allows_new_urls(self):
-        shortener = URLShortener()
+        shortener = self._new_shortener()
         urls = tuple(f"https://example.com/bulk/{index}" for index in range(7))
         codes = tuple(shortener.shorten(url) for url in urls)
 
@@ -142,6 +162,10 @@ class URLShortenerTest(unittest.TestCase):
         new_code = shortener.shorten(new_url)
         self.assertEqual(new_code, encode(len(urls) + 1))
         self.assertEqual(shortener.expand(new_code), new_url)
+
+
+class LinearProbingURLShortenerTest(URLShortenerTest):
+    strategy: Literal["chaining", "linear_probing"] = "linear_probing"
 
 
 if __name__ == "__main__":

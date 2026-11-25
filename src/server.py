@@ -8,6 +8,8 @@ from urllib.parse import parse_qsl, urlsplit
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from src.hash_table import ChainedHashTable
+from src.linear_probing import LinearProbingHashTable
 from src.shortener import URLShortener
 
 
@@ -38,7 +40,7 @@ h1 { margin-top: 0; font-size: clamp(2rem, 5vw, 2.8rem); }
 h2 { margin-top: 0; }
 p { line-height: 1.6; }
 label { display: block; font-weight: 650; margin: 20px 0 8px; }
-input[type="url"], input[readonly] {
+input[type="url"], input[readonly], select {
   width: 100%;
   min-width: 0;
   border: 1px solid #bfdbfe;
@@ -104,6 +106,7 @@ def _render_page(content: str) -> str:
 def render_home(
     short_url: str | None = None,
     error_message: str | None = None,
+    strategy: str = "chaining",
 ) -> str:
     error_html = ""
     if error_message is not None:
@@ -141,6 +144,8 @@ def render_home(
             "</script>"
         )
 
+    chaining_selected = " selected" if strategy == "chaining" else ""
+    linear_selected = " selected" if strategy == "linear_probing" else ""
     content = (
         '<section class="card">'
         "<h1>URL Shortener</h1>"
@@ -150,6 +155,11 @@ def render_home(
         '<label for="url">Original URL</label>'
         '<input id="url" name="url" type="url" maxlength="2048" '
         'placeholder="https://example.com/page" required>'
+        '<label for="strategy">Hash table strategy</label>'
+        '<select id="strategy" name="strategy">'
+        f'<option value="chaining"{chaining_selected}>Chaining</option>'
+        f'<option value="linear_probing"{linear_selected}>Linear Probing</option>'
+        "</select>"
         '<div class="actions">'
         '<button type="submit">Create Short URL</button>'
         '<a class="button secondary" href="/table">View hash tables</a>'
@@ -160,7 +170,11 @@ def render_home(
     return _render_page(content)
 
 
-def _render_hash_trace(table, key: str) -> str:
+def _render_hash_trace(
+    table: ChainedHashTable[str] | LinearProbingHashTable[str],
+    key: str,
+    storage_index: int,
+) -> str:
     previous_value = 0
     steps = ["h = 0"]
     for character, value in table.hash_trace(key):
@@ -171,71 +185,88 @@ def _render_hash_trace(table, key: str) -> str:
         previous_value = value
     trace = html.escape("; ".join(steps))
     bucket_index = table.hash_index(key)
+    if isinstance(table, LinearProbingHashTable):
+        probe_path = " → ".join(str(index) for index in table.probe_trace(key))
+        return (
+            f"<small><strong>Horner hash:</strong> {trace}<br>"
+            f"<strong>Initial hash index:</strong> {bucket_index}<br>"
+            f"<strong>Probe path:</strong> {html.escape(probe_path)}<br>"
+            f"<strong>Final storage index:</strong> {storage_index}</small>"
+        )
     return (
         f"<small><strong>Horner hash:</strong> {trace}<br>"
-        f"<strong>Final bucket index:</strong> {bucket_index}</small>"
+        f"<strong>Final bucket index:</strong> {storage_index}</small>"
     )
 
 
-def render_table(shortener: URLShortener) -> str:
+def render_table(
+    shorteners: tuple[tuple[str, URLShortener], ...],
+) -> str:
     sections = []
-    for table_name, table in shortener.tables():
-        if table_name == "url_to_code":
-            title = "URL to code"
-            key_label = "Original URL"
-            value_label = "Short code"
-        else:
-            title = "Code to URL"
-            key_label = "Short code"
-            value_label = "Original URL"
-
-        bucket_rows = []
-        for bucket_index, chain in table.iter_buckets():
-            if chain:
-                nodes = []
-                for key, value in chain:
-                    nodes.append(
-                        '<div class="chain-node">'
-                        f"<strong>{key_label}:</strong> "
-                        f"<code>{html.escape(key)}</code><br>"
-                        f"<strong>{value_label}:</strong> "
-                        f"<code>{html.escape(value)}</code>"
-                        f"{_render_hash_trace(table, key)}"
-                        "</div>"
-                    )
-                bucket_content = (
-                    '<span class="chain">'
-                    + ' <span class="chain-arrow">→</span> '.join(nodes)
-                    + "</span>"
-                )
+    for strategy_name, shortener in shorteners:
+        for table_name, table in shortener.tables():
+            if table_name == "url_to_code":
+                title = "URL to code"
+                key_label = "Original URL"
+                value_label = "Short code"
             else:
-                bucket_content = '<span class="empty">Empty bucket</span>'
-            bucket_rows.append(
-                "<tr>"
-                f'<td class="bucket-number">{bucket_index}</td>'
-                f"<td>{bucket_content}</td>"
-                "</tr>"
-            )
+                title = "Code to URL"
+                key_label = "Short code"
+                value_label = "Original URL"
 
-        sections.append(
-            '<section class="card table-card">'
-            f"<h2>{title}</h2>"
-            '<p class="table-summary">'
-            f"Bucket count: {table.capacity} · "
-            f"Entry count: {table.size} · "
-            f"Load factor: {table.load_factor:.3f}"
-            "</p>"
-            '<div class="table-scroll"><table>'
-            "<thead><tr><th>Bucket</th><th>Chain</th></tr></thead>"
-            f"<tbody>{''.join(bucket_rows)}</tbody>"
-            "</table></div>"
-            "</section>"
-        )
+            bucket_rows = []
+            for bucket_index, chain in table.iter_buckets():
+                if chain:
+                    nodes = []
+                    for key, value in chain:
+                        nodes.append(
+                            '<div class="chain-node">'
+                            f"<strong>{key_label}:</strong> "
+                            f"<code>{html.escape(key)}</code><br>"
+                            f"<strong>{value_label}:</strong> "
+                            f"<code>{html.escape(value)}</code>"
+                            f"{_render_hash_trace(table, key, bucket_index)}"
+                            "</div>"
+                        )
+                    bucket_content = (
+                        '<span class="chain">'
+                        + ' <span class="chain-arrow">→</span> '.join(nodes)
+                        + "</span>"
+                    )
+                else:
+                    bucket_content = '<span class="empty">Empty bucket</span>'
+                bucket_rows.append(
+                    "<tr>"
+                    f'<td class="bucket-number">{bucket_index}</td>'
+                    f"<td>{bucket_content}</td>"
+                    "</tr>"
+                )
+
+            bucket_column = (
+                "Slot" if isinstance(table, LinearProbingHashTable) else "Bucket"
+            )
+            value_column = (
+                "Entry" if isinstance(table, LinearProbingHashTable) else "Chain"
+            )
+            sections.append(
+                '<section class="card table-card">'
+                f"<h2>{strategy_name} - {title}</h2>"
+                '<p class="table-summary">'
+                f"Bucket count: {table.capacity} · "
+                f"Entry count: {table.size} · "
+                f"Load factor: {table.load_factor:.3f}"
+                "</p>"
+                '<div class="table-scroll"><table>'
+                f"<thead><tr><th>{bucket_column}</th><th>{value_column}</th></tr></thead>"
+                f"<tbody>{''.join(bucket_rows)}</tbody>"
+                "</table></div>"
+                "</section>"
+            )
 
     content = (
         '<section class="card">'
         "<h1>Hash table visualization</h1>"
-        "<p>Bucket chains and Horner hash calculations for both mappings.</p>"
+        "<p>Hash table entries and Horner hash calculations for both strategies.</p>"
         f"{''.join(sections)}"
         '<div class="actions"><a class="button secondary" href="/">'
         "Back to URL Shortener</a></div>"
@@ -246,6 +277,7 @@ def render_table(shortener: URLShortener) -> str:
 
 class ShortenerHandler(BaseHTTPRequestHandler):
     shortener = URLShortener()
+    linear_shortener = URLShortener(strategy="linear_probing")
 
     def _send_html(
         self,
@@ -284,7 +316,7 @@ class ShortenerHandler(BaseHTTPRequestHandler):
         except ValueError:
             return ""
 
-    def _read_url(self) -> str:
+    def _read_form(self) -> tuple[str, str]:
         if self.headers.get_content_type() != _FORM_CONTENT_TYPE:
             raise ValueError("request must use URL-encoded form data")
 
@@ -315,7 +347,13 @@ class ShortenerHandler(BaseHTTPRequestHandler):
         urls = [value for name, value in fields if name == "url"]
         if len(urls) != 1:
             raise ValueError("request must include exactly one URL")
-        return urls[0]
+        strategies = [value for name, value in fields if name == "strategy"]
+        if len(strategies) > 1:
+            raise ValueError("request must include at most one strategy")
+        strategy = strategies[0] if strategies else "chaining"
+        if strategy not in ("chaining", "linear_probing"):
+            raise ValueError("request strategy is invalid")
+        return urls[0], strategy
 
     def do_GET(self) -> None:
         path = self._request_path()
@@ -323,7 +361,15 @@ class ShortenerHandler(BaseHTTPRequestHandler):
             self._send_html(200, render_home())
             return
         if path == "/table":
-            self._send_html(200, render_table(self.shortener))
+            self._send_html(
+                200,
+                render_table(
+                    (
+                        ("Chaining", self.shortener),
+                        ("Linear Probing", self.linear_shortener),
+                    )
+                ),
+            )
             return
         if path == "/shorten":
             self._send_error_page(
@@ -335,8 +381,12 @@ class ShortenerHandler(BaseHTTPRequestHandler):
             return
         if path.startswith("/r/"):
             code = path[len("/r/") :]
+            shortener = self.shortener
+            if code.startswith("linear/"):
+                code = code[len("linear/") :]
+                shortener = self.linear_shortener
             try:
-                url = self.shortener.expand(code)
+                url = shortener.expand(code)
             except (KeyError, ValueError):
                 self._send_error_page(
                     404,
@@ -369,20 +419,36 @@ class ShortenerHandler(BaseHTTPRequestHandler):
                 )
             return
 
+        strategy = "chaining"
         try:
-            url = self._read_url()
-            code = self.shortener.shorten(url)
+            url, strategy = self._read_form()
+            shortener = (
+                self.linear_shortener
+                if strategy == "linear_probing"
+                else self.shortener
+            )
+            code = shortener.shorten(url)
         except ValueError:
             self.close_connection = True
             self._send_html(
                 400,
                 render_home(
-                    error_message="Please enter a valid URL and submit a URL-encoded form."
+                    error_message=(
+                        "Please enter a valid URL, select a strategy, and submit "
+                        "a URL-encoded form."
+                    ),
+                    strategy=strategy,
                 ),
             )
             return
 
-        self._send_html(200, render_home(short_url=f"/r/{code}"))
+        short_path = f"/r/{code}"
+        if strategy == "linear_probing":
+            short_path = f"/r/linear/{code}"
+        self._send_html(
+            200,
+            render_home(short_url=short_path, strategy=strategy),
+        )
 
     def do_PUT(self) -> None:
         self._send_error_page(

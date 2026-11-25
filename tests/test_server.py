@@ -12,6 +12,8 @@ class ShortenerServerTest(unittest.TestCase):
     def setUp(self):
         self.shortener = URLShortener()
         ShortenerHandler.shortener = self.shortener
+        self.linear_shortener = URLShortener(strategy="linear_probing")
+        ShortenerHandler.linear_shortener = self.linear_shortener
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), ShortenerHandler)
         self.server.daemon_threads = True
         self.thread = threading.Thread(target=self.server.serve_forever)
@@ -56,15 +58,18 @@ class ShortenerServerTest(unittest.TestCase):
         connection.close()
         return status, location, content_type, response_body
 
-    def post_url(self, url, headers=()):
+    def post_url(self, url, headers=(), strategy=None):
         request_headers = (
             ("Content-Type", "application/x-www-form-urlencoded"),
             *headers,
         )
+        fields = [("url", url)]
+        if strategy is not None:
+            fields.append(("strategy", strategy))
         return self.request(
             "POST",
             "/shorten",
-            urlencode((("url", url),)),
+            urlencode(fields),
             request_headers,
         )
 
@@ -77,6 +82,12 @@ class ShortenerServerTest(unittest.TestCase):
         self.assertIn("<title>URL Shortener</title>", body)
         self.assertIn('action="/shorten"', body)
         self.assertIn('name="url"', body)
+        self.assertIn('name="strategy"', body)
+        self.assertIn('<option value="chaining" selected>Chaining</option>', body)
+        self.assertIn(
+            '<option value="linear_probing">Linear Probing</option>',
+            body,
+        )
         self.assertIn("Create Short URL", body)
         self.assertIn('href="/table"', body)
 
@@ -117,6 +128,44 @@ class ShortenerServerTest(unittest.TestCase):
         self.assertIn("window.location.origin", body)
         self.assertNotIn("localhost", body)
         self.assertNotIn("bug-free-waffle", body)
+
+    def test_chaining_and_linear_shortener_data_are_independent(self):
+        chaining_url = "https://example.com/chaining"
+        linear_url = "https://example.com/linear"
+        chaining_status, _, _, chaining_body = self.post_url(chaining_url)
+        linear_status, _, _, linear_body = self.post_url(
+            linear_url,
+            strategy="linear_probing",
+        )
+
+        self.assertEqual(chaining_status, 200)
+        self.assertEqual(linear_status, 200)
+        self.assertIn('href="/r/1"', chaining_body)
+        self.assertIn('href="/r/linear/1"', linear_body)
+        self.assertIn(
+            '<option value="linear_probing" selected>Linear Probing</option>',
+            linear_body,
+        )
+        self.assertEqual(self.shortener.tables()[0][1].size, 1)
+        self.assertEqual(self.linear_shortener.tables()[0][1].size, 1)
+
+        chaining_redirect = self.request("GET", "/r/1")
+        linear_redirect = self.request("GET", "/r/linear/1")
+        self.assertEqual(chaining_redirect[0], 302)
+        self.assertEqual(chaining_redirect[1], chaining_url)
+        self.assertEqual(linear_redirect[0], 302)
+        self.assertEqual(linear_redirect[1], linear_url)
+
+    def test_invalid_strategy_returns_bad_request(self):
+        status, _, _, body = self.post_url(
+            "https://example.com/invalid-strategy",
+            strategy="unsupported",
+        )
+
+        self.assertEqual(status, 400)
+        self.assertIn("valid URL", body)
+        self.assertEqual(self.shortener.tables()[0][1].size, 0)
+        self.assertEqual(self.linear_shortener.tables()[0][1].size, 0)
 
     def test_invalid_or_malformed_post_requests_return_bad_request(self):
         invalid_status, _, _, invalid_body = self.post_url("ftp://example.com")
@@ -196,6 +245,18 @@ class ShortenerServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt;", body)
         self.assertNotIn("<script>alert(1)</script>", body)
+
+    def test_table_shows_linear_hash_and_probe_trace(self):
+        self.linear_shortener.shorten("https://example.com/linear-table")
+
+        status, _, _, body = self.request("GET", "/table")
+
+        self.assertEqual(status, 200)
+        self.assertIn("Chaining", body)
+        self.assertIn("Linear Probing", body)
+        self.assertIn("Initial hash index", body)
+        self.assertIn("Probe path", body)
+        self.assertIn("Final storage index", body)
 
     def test_unsupported_method_returns_method_not_allowed(self):
         status, _, _, _ = self.request("PUT", "/")
